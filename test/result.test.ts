@@ -1613,4 +1613,208 @@ describe('`Result` method tests', () => {
       expect(unwrap(flattened)).toBeUndefined();
     });
   });
+
+  describe('`Symbol.iterator`', () => {
+    test('with `Ok`', () => {
+      let okVal = result.ok<number, string>(42);
+      expect([...okVal]).toEqual([42]);
+
+      let collected: number[] = [];
+      for (let item of okVal) {
+        expectTypeOf(item).toEqualTypeOf<number>();
+        collected.push(item);
+      }
+      expect(collected).toEqual([42]);
+      expect(Array.from(okVal)).toEqual([42]);
+    });
+
+    test('with `Err`', () => {
+      let errVal = result.err<number, string>('nope');
+      expect([...errVal]).toEqual([]);
+
+      let collected: number[] = [];
+      for (let item of errVal) {
+        expectTypeOf(item).toEqualTypeOf<number>();
+        collected.push(item);
+      }
+      expect(collected).toEqual([]);
+    });
+  });
+
+  describe('`sequence`', () => {
+    test('with an array of `Ok`s', () => {
+      let res = result.sequence([result.ok(1), result.ok(2), result.ok(3)]);
+      expectTypeOf(res).toEqualTypeOf<Result<number[], never>>();
+      expect(res).toEqual(result.ok([1, 2, 3]));
+    });
+
+    test('with an empty iterable', () => {
+      let res = result.sequence<number, string>([]);
+      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
+      expect(res).toEqual(result.ok([]));
+    });
+
+    test('with a `Set` of `Ok`s', () => {
+      let set = new Set([result.ok<string, number>('a'), result.ok<string, number>('b')]);
+      let res = result.sequence(set);
+      expectTypeOf(res).toEqualTypeOf<Result<string[], number>>();
+      expect(res).toEqual(result.ok(['a', 'b']));
+    });
+
+    test('stops at the first `Err` without pulling the next item', () => {
+      let pulled = 0;
+      function* gen(): Generator<Result<number, string>> {
+        pulled += 1;
+        yield result.ok(1);
+        pulled += 1;
+        yield result.err('first failure');
+        pulled += 1;
+        yield result.err('second failure');
+      }
+
+      let res = result.sequence(gen());
+      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
+      expect(res).toEqual(result.err('first failure'));
+      expect(pulled).toBe(2);
+    });
+  });
+
+  describe('`traverse`', () => {
+    const checkPositive = (n: number): Result<number, string> =>
+      n > 0 ? result.ok(n * 2) : result.err(`non-positive: ${n}`);
+
+    test('with items and function (all `Ok`)', () => {
+      let res = result.traverse([1, 2, 3], checkPositive);
+      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
+      expect(res).toEqual(result.ok([2, 4, 6]));
+    });
+
+    test('with a `Set`', () => {
+      let res = result.traverse(new Set([1, 2, 3]), (n) => result.ok(String(n)));
+      expectTypeOf(res).toEqualTypeOf<Result<string[], never>>();
+      expect(res).toEqual(result.ok(['1', '2', '3']));
+    });
+
+    test('stops at the first `Err` without pulling the next item', () => {
+      let pulled = 0;
+      let called: number[] = [];
+      function* gen(): Generator<number> {
+        pulled += 1;
+        yield 1;
+        pulled += 1;
+        yield -1;
+        pulled += 1;
+        yield -2;
+      }
+
+      let res = result.traverse(gen(), (n) => {
+        called.push(n);
+        return checkPositive(n);
+      });
+      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
+      expect(res).toEqual(result.err('non-positive: -1'));
+      expect(pulled).toBe(2);
+      expect(called).toEqual([1, -1]);
+    });
+
+    test('curried with only the function', () => {
+      let traversePositive = result.traverse(checkPositive);
+      expectTypeOf(traversePositive).toEqualTypeOf<
+        (items: Iterable<number>) => Result<number[], string>
+      >();
+      expect(traversePositive([1, 2, 3])).toEqual(result.ok([2, 4, 6]));
+      expect(traversePositive([1, -2, -3])).toEqual(result.err('non-positive: -2'));
+    });
+
+    test('with function first and items second', () => {
+      let res = result.traverse(checkPositive, [1, 2, 3]);
+      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
+      expect(res).toEqual(result.ok([2, 4, 6]));
+    });
+  });
+
+  describe('`zip`', () => {
+    test('when both are `Ok`', () => {
+      let a = result.ok<number, string>(1);
+      let b = result.ok<string, Error>('hello');
+      let zipped = result.zip(a, b);
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | Error>>();
+      expect(zipped).toEqual(result.ok([1, 'hello']));
+      expect(a.zip(b)).toEqual(result.ok([1, 'hello']));
+    });
+
+    test('when the first is `Err`', () => {
+      let a = result.err<number, string>('first err');
+      let b = result.ok<string, boolean>('hello');
+      let zipped = result.zip(a, b);
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
+      expect(zipped).toEqual(result.err('first err'));
+      expect(a.zip(b)).toEqual(result.err('first err'));
+    });
+
+    test('when the second is `Err`', () => {
+      let a = result.ok<number, string>(1);
+      let b = result.err<string, boolean>(false);
+      let zipped = result.zip(a, b);
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
+      expect(zipped).toEqual(result.err(false));
+      expect(a.zip(b)).toEqual(result.err(false));
+    });
+
+    test('when both are `Err`', () => {
+      let a = result.err<number, string>('first err');
+      let b = result.err<string, string>('second err');
+      expect(result.zip(a, b)).toEqual(result.err('first err'));
+    });
+
+    test('curried form', () => {
+      let zipWithOne = result.zip(result.ok<number, string>(1));
+      let zipped = zipWithOne(result.ok<string, boolean>('two'));
+      expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
+      expect(zipped).toEqual(result.ok([1, 'two']));
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const combine = (n: number, s: string) => `${s}: ${n}`;
+
+    test('with two `Ok`s and function last', () => {
+      let a = result.ok<number, string>(42);
+      let b = result.ok<string, boolean>('answer');
+      let res = result.zipWith(a, b, combine);
+      expectTypeOf(res).toEqualTypeOf<Result<string, string | boolean>>();
+      expect(res).toEqual(result.ok('answer: 42'));
+      expect(a.zipWith(b, combine)).toEqual(result.ok('answer: 42'));
+    });
+
+    test('when either is `Err`', () => {
+      let a = result.ok<number, string>(42);
+      let b = result.err<string, string>('b err');
+      let c = result.err<number, string>('c err');
+
+      expect(result.zipWith(a, b, combine)).toEqual(result.err('b err'));
+      expect(result.zipWith(c, result.ok('answer'), combine)).toEqual(result.err('c err'));
+      expect(result.zipWith(c, b, combine)).toEqual(result.err('c err'));
+      expect(a.zipWith(b, combine)).toEqual(result.err('b err'));
+      expect(c.zipWith(result.ok('answer'), combine)).toEqual(result.err('c err'));
+    });
+
+    test('curried and alternative argument orders', () => {
+      let a = result.ok<number, string>(42);
+      let b = result.ok<string, string>('answer');
+
+      // Two inputs first, then function
+      let withInputs = result.zipWith(a, b);
+      expect(withInputs(combine)).toEqual(result.ok('answer: 42'));
+
+      // Function first, then two inputs
+      let withFn = result.zipWith(combine);
+      expect(withFn(a, b)).toEqual(result.ok('answer: 42'));
+      expect(withFn(a)(b)).toEqual(result.ok('answer: 42'));
+
+      // Function and all inputs
+      expect(result.zipWith(combine, a, b)).toEqual(result.ok('answer: 42'));
+      expect(result.zipWith(combine, a)(b)).toEqual(result.ok('answer: 42'));
+    });
+  });
 });

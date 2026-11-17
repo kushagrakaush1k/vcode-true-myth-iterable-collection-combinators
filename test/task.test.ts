@@ -42,6 +42,10 @@ import Task, {
   stopRetrying,
   isRetryFailed,
   flatten,
+  sequence,
+  traverse,
+  zip,
+  zipWith,
 } from 'true-myth/task';
 import {
   exponential,
@@ -3794,6 +3798,234 @@ describe('type utilities', () => {
     expectTypeOf<
       Settled<Array<Task<string, number> | Task<number, string> | Task<boolean, Error>>>
     >().toEqualTypeOf<Array<Result<string | number | boolean, number | string | Error>>>();
+  });
+
+  describe('`Symbol.asyncIterator`', () => {
+    test('when the task resolves', async () => {
+      let task = Task.resolve<number, string>(42);
+      let results: Array<Result<number, string>> = [];
+      for await (let res of task) {
+        expectTypeOf(res).toEqualTypeOf<Result<number, string>>();
+        results.push(res);
+      }
+      expect(results).toEqual([Result.ok(42)]);
+
+      // Re-iterating yields the same Result again
+      let secondPass: Array<Result<number, string>> = [];
+      for await (let res of task) {
+        secondPass.push(res);
+      }
+      expect(secondPass).toEqual([Result.ok(42)]);
+    });
+
+    test('when the task rejects', async () => {
+      let task = Task.reject<number, string>('boom');
+      let results: Array<Result<number, string>> = [];
+      for await (let res of task) {
+        expectTypeOf(res).toEqualTypeOf<Result<number, string>>();
+        results.push(res);
+      }
+      expect(results).toEqual([Result.err('boom')]);
+    });
+
+    test('when the task is initially pending', async () => {
+      let { task, resolve: resolveTask } = Task.withResolvers<string, number>();
+      resolveTask('later');
+      let results: Array<Result<string, number>> = [];
+      for await (let res of task) {
+        results.push(res);
+      }
+      expect(results).toEqual([Result.ok('later')]);
+    });
+  });
+
+  describe('`sequence`', () => {
+    test('with an array of resolved `Task`s', async () => {
+      let theTask = sequence([Task.resolve(1), Task.resolve(2), Task.resolve(3)]);
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], never>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok([1, 2, 3]));
+    });
+
+    test('with an empty iterable', async () => {
+      let theTask = sequence<number, string>([]);
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok([]));
+    });
+
+    test('with a `Set` of `Task`s', async () => {
+      let set = new Set([Task.resolve<string, number>('a'), Task.resolve<string, number>('b')]);
+      let theTask = sequence(set);
+      expectTypeOf(theTask).toEqualTypeOf<Task<string[], number>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok(['a', 'b']));
+    });
+
+    test('stops at the first rejected `Task`', async () => {
+      let pulled = 0;
+      function* gen(): Generator<Task<number, string>> {
+        pulled += 1;
+        yield Task.resolve(1);
+        pulled += 1;
+        yield Task.reject('first failure');
+        pulled += 1;
+        yield Task.reject('second failure');
+      }
+
+      let theTask = sequence(gen());
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.err('first failure'));
+      expect(pulled).toBe(2);
+    });
+
+    test('when a pending `Task` rejects asynchronously', async () => {
+      let { task: t1, resolve: r1 } = Task.withResolvers<number, string>();
+      let { task: t2, reject: rej2 } = Task.withResolvers<number, string>();
+      let theTask = sequence([t1, t2]);
+      rej2('async err');
+      r1(1);
+      let res = await theTask;
+      expect(res).toEqual(Result.err('async err'));
+    });
+  });
+
+  describe('`traverse`', () => {
+    const checkPositive = (n: number): Task<number, string> =>
+      n > 0 ? Task.resolve(n * 2) : Task.reject(`non-positive: ${n}`);
+
+    test('with items and function (all resolve)', async () => {
+      let theTask = traverse([1, 2, 3], checkPositive);
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok([2, 4, 6]));
+    });
+
+    test('with a `Set`', async () => {
+      let theTask = traverse(new Set([1, 2, 3]), (n) => Task.resolve(String(n)));
+      expectTypeOf(theTask).toEqualTypeOf<Task<string[], never>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok(['1', '2', '3']));
+    });
+
+    test('stops at the first rejection without pulling the next item', async () => {
+      let pulled = 0;
+      let called: number[] = [];
+      function* gen(): Generator<number> {
+        pulled += 1;
+        yield 1;
+        pulled += 1;
+        yield -1;
+        pulled += 1;
+        yield -2;
+      }
+
+      let theTask = traverse(gen(), (n) => {
+        called.push(n);
+        return checkPositive(n);
+      });
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.err('non-positive: -1'));
+      expect(pulled).toBe(2);
+      expect(called).toEqual([1, -1]);
+    });
+
+    test('curried with only the function', async () => {
+      let traversePositive = traverse(checkPositive);
+      expectTypeOf(traversePositive).toEqualTypeOf<
+        (items: Iterable<number>) => Task<number[], string>
+      >();
+      expect(await traversePositive([1, 2, 3])).toEqual(Result.ok([2, 4, 6]));
+      expect(await traversePositive([1, -2, -3])).toEqual(Result.err('non-positive: -2'));
+    });
+
+    test('with function first and items second', async () => {
+      let theTask = traverse(checkPositive, [1, 2, 3]);
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      expect(await theTask).toEqual(Result.ok([2, 4, 6]));
+    });
+  });
+
+  describe('`zip`', () => {
+    test('when both resolve', async () => {
+      let a = Task.resolve<number, string>(1);
+      let b = Task.resolve<string, Error>('hello');
+      let zipped = zip(a, b);
+      expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | Error>>();
+      expect(await zipped).toEqual(Result.ok([1, 'hello']));
+      expect(await a.zip(b)).toEqual(Result.ok([1, 'hello']));
+    });
+
+    test('with a `Result`', async () => {
+      let a = Task.resolve<number, string>(1);
+      let b = Result.ok<string, boolean>('hello');
+      let zipped = zip(a, b);
+      expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | boolean>>();
+      expect(await zipped).toEqual(Result.ok([1, 'hello']));
+      expect(await a.zip(b)).toEqual(Result.ok([1, 'hello']));
+    });
+
+    test('when either rejects', async () => {
+      let a = Task.reject<number, string>('first err');
+      let b = Task.resolve<string, boolean>('hello');
+      let c = Task.reject<string, boolean>(false);
+
+      expect(await zip(a, b)).toEqual(Result.err('first err'));
+      expect(await zip(Task.resolve<number, string>(1), c)).toEqual(Result.err(false));
+      expect(await zip(a, c)).toEqual(Result.err('first err'));
+    });
+
+    test('curried form', async () => {
+      let zipWithOne = zip(Task.resolve<number, string>(1));
+      let zipped = zipWithOne(Task.resolve<string, boolean>('two'));
+      expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | boolean>>();
+      expect(await zipped).toEqual(Result.ok([1, 'two']));
+    });
+  });
+
+  describe('`zipWith`', () => {
+    const combine = (n: number, s: string) => `${s}: ${n}`;
+
+    test('with two resolved `Task`s and function last', async () => {
+      let a = Task.resolve<number, string>(42);
+      let b = Task.resolve<string, boolean>('answer');
+      let theTask = zipWith(a, b, combine);
+      expectTypeOf(theTask).toEqualTypeOf<Task<string, string | boolean>>();
+      expect(await theTask).toEqual(Result.ok('answer: 42'));
+      expect(await a.zipWith(b, combine)).toEqual(Result.ok('answer: 42'));
+    });
+
+    test('when either rejects', async () => {
+      let a = Task.resolve<number, string>(42);
+      let b = Task.reject<string, string>('b err');
+      let c = Task.reject<number, string>('c err');
+
+      expect(await zipWith(a, b, combine)).toEqual(Result.err('b err'));
+      expect(await zipWith(c, Task.resolve('answer'), combine)).toEqual(Result.err('c err'));
+      expect(await zipWith(c, b, combine)).toEqual(Result.err('c err'));
+      expect(await a.zipWith(b, combine)).toEqual(Result.err('b err'));
+      expect(await c.zipWith(Task.resolve('answer'), combine)).toEqual(Result.err('c err'));
+    });
+
+    test('curried and alternative argument orders', async () => {
+      let a = Task.resolve<number, string>(42);
+      let b = Task.resolve<string, string>('answer');
+
+      // Two inputs first, then function
+      let withInputs = zipWith(a, b);
+      expect(await withInputs(combine)).toEqual(Result.ok('answer: 42'));
+
+      // Function first, then two inputs
+      let withFn = zipWith(combine);
+      expect(await withFn(a, b)).toEqual(Result.ok('answer: 42'));
+      expect(await withFn(a)(b)).toEqual(Result.ok('answer: 42'));
+
+      // Function and all inputs
+      expect(await zipWith(combine, a, b)).toEqual(Result.ok('answer: 42'));
+      expect(await zipWith(combine, a)(b)).toEqual(Result.ok('answer: 42'));
+    });
   });
 });
 

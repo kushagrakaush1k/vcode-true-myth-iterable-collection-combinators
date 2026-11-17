@@ -954,6 +954,30 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
   flatten<A, F, G>(this: Task<Task<A, F>, G>): Task<A, F | G> {
     return this.andThen(identity);
   }
+
+  /**
+    Implement the `AsyncIterable` protocol for `Task`.
+
+    Yields a single {@linkcode Result}: {@linkcode result.Ok Ok(value)} if the
+    `Task` resolves, or {@linkcode result.Err Err(reason)} if it rejects.
+   */
+  async *[Symbol.asyncIterator](): AsyncGenerator<Result<T, E>, void, unknown> {
+    yield await this.#promise;
+  }
+
+  /** Method variant for {@linkcode zip} */
+  zip<U, F = E>(other: Task<U, F> | Result<U, F>): Task<[T, U], E | F> {
+    let otherTask = result.isInstance(other) ? fromResult(other) : other;
+    return all([this as Task<T, E>, otherTask]);
+  }
+
+  /** Method variant for {@linkcode zipWith} */
+  zipWith<U, V, F = E>(
+    other: Task<U, F> | Result<U, F>,
+    fn: (first: T, second: U) => V
+  ): Task<V, E | F> {
+    return this.zip(other).map(([first, second]) => fn(first, second));
+  }
 }
 
 /**
@@ -2688,6 +2712,155 @@ export function flatten<T, E, F>(nestedTask: Task<Task<T, E>, F>): Task<T, E | F
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nestedTask.andThen(identity);
+}
+
+/**
+  Given any `Iterable` of {@linkcode Task}s, collect the resolved values of each
+  `Task` into an array wrapped in a `Task`, or reject immediately with the first
+  rejection encountered.
+ */
+export function sequence<R extends AnyTask>(
+  tasks: Iterable<R>
+): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function sequence<T, E>(tasks: Iterable<Task<T, E>>): Task<T[], E>;
+export function sequence(tasks: Iterable<AnyTask>): Task<unknown[], unknown> {
+  return traverse(tasks, identity);
+}
+
+/**
+  Map each element of an `Iterable` to a {@linkcode Task} using `fn`, collecting
+  the resolved values into a `Task<U[], E>` or rejecting with the first
+  rejection encountered.
+
+  Can also be called with just `fn` to produce a curried function accepting `items`.
+ */
+export function traverse<T, R extends AnyTask>(
+  items: Iterable<T>,
+  fn: (item: T) => R
+): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverse<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T) => Task<U, E>
+): Task<U[], E>;
+export function traverse<T, R extends AnyTask>(
+  fn: (item: T) => R
+): (items: Iterable<T>) => Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverse<T, U, E>(
+  fn: (item: T) => Task<U, E>
+): (items: Iterable<T>) => Task<U[], E>;
+export function traverse<T, R extends AnyTask>(
+  fn: (item: T) => R,
+  items: Iterable<T>
+): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverse<T, U, E>(
+  fn: (item: T) => Task<U, E>,
+  items: Iterable<T>
+): Task<U[], E>;
+export function traverse<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T) => Task<U, E>),
+  fnOrItems?: ((item: T) => Task<U, E>) | Iterable<T>
+): Task<U[], E> | ((items: Iterable<T>) => Task<U[], E>) {
+  const op = (items: Iterable<T>, fn: (item: T) => Task<U, E>): Task<U[], E> => {
+    const tasks: Array<Task<U, E>> = [];
+    for (const item of items) {
+      const task = fn(item);
+      if (task.isRejected) {
+        return Task.reject(task.reason);
+      }
+      tasks.push(task);
+    }
+    return all(tasks) as Task<U[], E>;
+  };
+
+  if (typeof itemsOrFn === 'function') {
+    return fnOrItems !== undefined
+      ? op(fnOrItems as Iterable<T>, itemsOrFn)
+      : (items: Iterable<T>) => op(items, itemsOrFn);
+  }
+
+  return op(itemsOrFn, fnOrItems as (item: T) => Task<U, E>);
+}
+
+/**
+  Combine two {@linkcode Task} instances into a single `Task` resolving to a
+  tuple `[T, U]` of their values if both resolve, or rejecting with the first
+  rejection reason if either rejects.
+ */
+export function zip<T, E, U, F>(
+  first: Task<T, E>,
+  second: Task<U, F> | Result<U, F>
+): Task<[T, U], E | F>;
+export function zip<T, E, U = unknown, F = E>(
+  first: Task<T, E>
+): <U2 = U, F2 = F>(second: Task<U2, F2> | Result<U2, F2>) => Task<[T, U2], E | F2>;
+export function zip<T, E, U, F>(
+  first: Task<T, E>,
+  second?: Task<U, F> | Result<U, F>
+): Task<[T, U], E | F> | ((second: Task<U, F> | Result<U, F>) => Task<[T, U], E | F>) {
+  const op = (s: Task<U, F> | Result<U, F>): Task<[T, U], E | F> => first.zip(s);
+  return curry1(op, second);
+}
+
+/**
+  Combine two {@linkcode Task} instances using a function `fn`. If both inputs
+  resolve, resolves with `fn(firstValue, secondValue)`; otherwise rejects with
+  the first rejection reason.
+ */
+export function zipWith<T, E, U, F, V>(
+  first: Task<T, E>,
+  second: Task<U, F> | Result<U, F>,
+  fn: (first: T, second: U) => V
+): Task<V, E | F>;
+export function zipWith<T, E, U, F>(
+  first: Task<T, E>,
+  second: Task<U, F> | Result<U, F>
+): <V>(fn: (first: T, second: U) => V) => Task<V, E | F>;
+export function zipWith<T, U, V, E = never, F = E>(
+  fn: (first: T, second: U) => V
+): {
+  <E2 = E, F2 = F>(
+    first: Task<T, E2>,
+    second: Task<U, F2> | Result<U, F2>
+  ): Task<V, E2 | F2>;
+  <E2 = E>(
+    first: Task<T, E2>
+  ): <F2 = F>(second: Task<U, F2> | Result<U, F2>) => Task<V, E2 | F2>;
+};
+export function zipWith<T, E, U, F, V>(
+  fn: (first: T, second: U) => V,
+  first: Task<T, E>,
+  second: Task<U, F> | Result<U, F>
+): Task<V, E | F>;
+export function zipWith<T, E, U, V, F = E>(
+  fn: (first: T, second: U) => V,
+  first: Task<T, E>
+): <F2 = F>(second: Task<U, F2> | Result<U, F2>) => Task<V, E | F2>;
+export function zipWith<T, E, U, F, V>(
+  firstOrFn: Task<T, E> | ((first: T, second: U) => V),
+  secondOrFirst?: Task<U, F> | Result<U, F> | Task<T, E>,
+  fnOrSecond?: ((first: T, second: U) => V) | Task<U, F> | Result<U, F>
+): unknown {
+  if (typeof firstOrFn === 'function') {
+    const fn = firstOrFn;
+    if (secondOrFirst === undefined) {
+      return (first: Task<T, E>, second?: Task<U, F> | Result<U, F>) =>
+        second !== undefined
+          ? first.zipWith(second, fn)
+          : (s: Task<U, F> | Result<U, F>) => first.zipWith(s, fn);
+    }
+    const first = secondOrFirst as Task<T, E>;
+    if (fnOrSecond === undefined) {
+      return (second: Task<U, F> | Result<U, F>) => first.zipWith(second, fn);
+    }
+    return first.zipWith(fnOrSecond as Task<U, F> | Result<U, F>, fn);
+  }
+
+  const first = firstOrFn;
+  const second = secondOrFirst as Task<U, F> | Result<U, F>;
+  if (fnOrSecond === undefined) {
+    return (fn: (first: T, second: U) => V) => first.zipWith(second, fn);
+  }
+  return first.zipWith(second, fnOrSecond as (first: T, second: U) => V);
 }
 
 /**

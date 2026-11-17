@@ -381,6 +381,41 @@ class ResultImpl<T, E> {
     return this.andThen(identity);
   }
 
+  /**
+    Implement the `Iterable` protocol for `Result`.
+
+    If the `Result` is {@linkcode Ok}, the iterator yields its `value` once
+    and then finishes. If the `Result` is {@linkcode Err}, the iterator
+    completes immediately without yielding any values.
+   */
+  *[Symbol.iterator](): Generator<T, void, unknown> {
+    if (this.repr[0] === Variant.Ok) {
+      yield this.repr[1];
+    }
+  }
+
+  /** Method variant for {@linkcode zip} */
+  zip<U, F = E>(other: Result<U, F>): Result<[T, U], E | F> {
+    if (this.repr[0] === Variant.Err) {
+      return (this as Err<T, E>).cast();
+    }
+    if (other.isErr) {
+      return other.cast();
+    }
+    return Result.ok([this.repr[1], other.value]);
+  }
+
+  /** Method variant for {@linkcode zipWith} */
+  zipWith<U, V, F = E>(other: Result<U, F>, fn: (first: T, second: U) => V): Result<V, E | F> {
+    if (this.repr[0] === Variant.Err) {
+      return (this as Err<T, E>).cast();
+    }
+    if (other.isErr) {
+      return other.cast();
+    }
+    return Result.ok(fn(this.repr[1], other.value));
+  }
+
   cast() {
     return this;
   }
@@ -2015,6 +2050,162 @@ export function flatten<T, E1, E2>(nested: Result<Result<T, E2>, E1>): Result<T,
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nested.andThen(identity);
+}
+
+/**
+  Given any `Iterable` of {@linkcode Result}s, collect the values of each
+  {@linkcode Ok} into an array wrapped in `Ok`, or short-circuit and return
+  the first {@linkcode Err} encountered immediately (without pulling any further
+  items from the iterable).
+
+  @param results An iterable of `Result` instances.
+  @returns `Ok` with an array of unwrapped values, or the first `Err`.
+ */
+export function sequence<R extends AnyResult>(
+  results: Iterable<R>
+): Result<Array<OkFor<R>>, ErrFor<R>>;
+export function sequence<T, E>(results: Iterable<Result<T, E>>): Result<T[], E>;
+export function sequence(results: Iterable<AnyResult>): Result<unknown[], unknown> {
+  const values: unknown[] = [];
+  for (const item of results) {
+    if (item.isErr) {
+      return item.cast();
+    }
+    values.push(item.value);
+  }
+  return Result.ok(values);
+}
+
+/**
+  Map each element of an `Iterable` to a {@linkcode Result} using `fn`,
+  collecting the unwrapped {@linkcode Ok} values into a `Result<U[], E>`.
+  Short-circuits on the first {@linkcode Err} without pulling any remaining
+  items from `items`.
+
+  Can also be called with just `fn` to produce a curried function accepting `items`.
+ */
+export function traverse<T, R extends AnyResult>(
+  items: Iterable<T>,
+  fn: (item: T) => R
+): Result<Array<OkFor<R>>, ErrFor<R>>;
+export function traverse<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T) => Result<U, E>
+): Result<U[], E>;
+export function traverse<T, R extends AnyResult>(
+  fn: (item: T) => R
+): (items: Iterable<T>) => Result<Array<OkFor<R>>, ErrFor<R>>;
+export function traverse<T, U, E>(
+  fn: (item: T) => Result<U, E>
+): (items: Iterable<T>) => Result<U[], E>;
+export function traverse<T, R extends AnyResult>(
+  fn: (item: T) => R,
+  items: Iterable<T>
+): Result<Array<OkFor<R>>, ErrFor<R>>;
+export function traverse<T, U, E>(
+  fn: (item: T) => Result<U, E>,
+  items: Iterable<T>
+): Result<U[], E>;
+export function traverse<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T) => Result<U, E>),
+  fnOrItems?: ((item: T) => Result<U, E>) | Iterable<T>
+): Result<U[], E> | ((items: Iterable<T>) => Result<U[], E>) {
+  const op = (items: Iterable<T>, fn: (item: T) => Result<U, E>): Result<U[], E> => {
+    const values: U[] = [];
+    for (const item of items) {
+      const res = fn(item);
+      if (res.isErr) {
+        return res.cast();
+      }
+      values.push(res.value);
+    }
+    return Result.ok(values);
+  };
+
+  if (typeof itemsOrFn === 'function') {
+    return fnOrItems !== undefined
+      ? op(fnOrItems as Iterable<T>, itemsOrFn)
+      : (items: Iterable<T>) => op(items, itemsOrFn);
+  }
+
+  return op(itemsOrFn, fnOrItems as (item: T) => Result<U, E>);
+}
+
+/**
+  Combine two {@linkcode Result} instances into a single `Result` containing a
+  tuple `[T, U]` of their values if both are {@linkcode Ok}, or the first
+  {@linkcode Err} if either is `Err`.
+ */
+export function zip<T, E, U, F>(
+  first: Result<T, E>,
+  second: Result<U, F>
+): Result<[T, U], E | F>;
+export function zip<T, E, U = unknown, F = E>(
+  first: Result<T, E>
+): <U2 = U, F2 = F>(second: Result<U2, F2>) => Result<[T, U2], E | F2>;
+export function zip<T, E, U, F>(
+  first: Result<T, E>,
+  second?: Result<U, F>
+): Result<[T, U], E | F> | ((second: Result<U, F>) => Result<[T, U], E | F>) {
+  const op = (s: Result<U, F>): Result<[T, U], E | F> => first.zip(s);
+  return curry1(op, second);
+}
+
+/**
+  Combine two {@linkcode Result} instances using a function `fn`. If both inputs
+  are {@linkcode Ok}, returns `Ok(fn(first.value, second.value))`; otherwise
+  returns the first {@linkcode Err}.
+ */
+export function zipWith<T, E, U, F, V>(
+  first: Result<T, E>,
+  second: Result<U, F>,
+  fn: (first: T, second: U) => V
+): Result<V, E | F>;
+export function zipWith<T, E, U, F>(
+  first: Result<T, E>,
+  second: Result<U, F>
+): <V>(fn: (first: T, second: U) => V) => Result<V, E | F>;
+export function zipWith<T, U, V, E = never, F = E>(
+  fn: (first: T, second: U) => V
+): {
+  <E2 = E, F2 = F>(first: Result<T, E2>, second: Result<U, F2>): Result<V, E2 | F2>;
+  <E2 = E>(first: Result<T, E2>): <F2 = F>(second: Result<U, F2>) => Result<V, E2 | F2>;
+};
+export function zipWith<T, E, U, F, V>(
+  fn: (first: T, second: U) => V,
+  first: Result<T, E>,
+  second: Result<U, F>
+): Result<V, E | F>;
+export function zipWith<T, E, U, V, F = E>(
+  fn: (first: T, second: U) => V,
+  first: Result<T, E>
+): <F2 = F>(second: Result<U, F2>) => Result<V, E | F2>;
+export function zipWith<T, E, U, F, V>(
+  firstOrFn: Result<T, E> | ((first: T, second: U) => V),
+  secondOrFirst?: Result<U, F> | Result<T, E>,
+  fnOrSecond?: ((first: T, second: U) => V) | Result<U, F>
+): unknown {
+  if (typeof firstOrFn === 'function') {
+    const fn = firstOrFn;
+    if (secondOrFirst === undefined) {
+      return (first: Result<T, E>, second?: Result<U, F>) =>
+        second !== undefined
+          ? first.zipWith(second, fn)
+          : (s: Result<U, F>) => first.zipWith(s, fn);
+    }
+    const first = secondOrFirst as Result<T, E>;
+    if (fnOrSecond === undefined) {
+      return (second: Result<U, F>) => first.zipWith(second, fn);
+    }
+    return first.zipWith(fnOrSecond as Result<U, F>, fn);
+  }
+
+  const first = firstOrFn;
+  const second = secondOrFirst as Result<U, F>;
+  if (fnOrSecond === undefined) {
+    return (fn: (first: T, second: U) => V) => first.zipWith(second, fn);
+  }
+  return first.zipWith(second, fnOrSecond as (first: T, second: U) => V);
 }
 
 /**

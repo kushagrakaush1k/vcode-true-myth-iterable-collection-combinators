@@ -405,6 +405,36 @@ class MaybeImpl<T extends {}> implements SomeMaybe<T> {
   flatten<A extends {}>(this: Maybe<Maybe<A>>): Maybe<A> {
     return this.andThen(identity);
   }
+
+  /**
+    Implement the `Iterable` protocol for `Maybe`.
+
+    If the `Maybe` is {@linkcode Just}, the iterator yields its `value` once
+    and then finishes. If the `Maybe` is {@linkcode Nothing}, the iterator
+    completes immediately without yielding any values.
+   */
+  *[Symbol.iterator](): Generator<T, void, unknown> {
+    if (this.repr[0] === Variant.Just) {
+      yield this.repr[1];
+    }
+  }
+
+  /** Method variant for {@linkcode zip} */
+  zip<U extends {}>(other: Maybe<U>): Maybe<[T, U]> {
+    return this.repr[0] === Variant.Just && other.isJust
+      ? just([this.repr[1], other.value])
+      : nothing();
+  }
+
+  /** Method variant for {@linkcode zipWith} */
+  zipWith<U extends {}, V extends {}>(
+    other: Maybe<U>,
+    fn: (first: T, second: U) => V
+  ): Maybe<V> {
+    return this.repr[0] === Variant.Just && other.isJust
+      ? just(fn(this.repr[1], other.value))
+      : nothing();
+  }
 }
 
 /**
@@ -1845,6 +1875,159 @@ export function flatten<T extends {}>(nested: Maybe<Maybe<T>>): Maybe<T> {
   // Uses `andThen` directly rather than calling `.flatten()` to avoid an extra
   // function dispatch.
   return nested.andThen(identity);
+}
+
+/**
+  Given any `Iterable` of {@linkcode Maybe}s, collect the values of each
+  {@linkcode Just} into an array wrapped in `Just`, or short-circuit and return
+  {@linkcode Nothing} immediately upon encountering the first `Nothing` (without
+  pulling any further items from the iterable).
+
+  @param maybes An iterable of `Maybe` instances.
+  @returns `Just` an array of unwrapped values, or `Nothing`.
+ */
+export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<T[]>;
+export function sequence<R extends AnyMaybe>(maybes: Iterable<R>): Maybe<Array<ValueFor<R>>>;
+export function sequence<T extends {}>(maybes: Iterable<Maybe<T>>): Maybe<T[]> {
+  const values: T[] = [];
+  for (const item of maybes) {
+    if (item.isNothing) {
+      return nothing();
+    }
+    values.push(item.value);
+  }
+  return just(values);
+}
+
+/**
+  Map each element of an `Iterable` to a {@linkcode Maybe} using `fn`, collecting
+  the unwrapped {@linkcode Just} values into a `Maybe<U[]>`. Short-circuits on
+  the first {@linkcode Nothing} without pulling any remaining items from `items`.
+
+  Can also be called with just `fn` to produce a curried function accepting `items`.
+ */
+export function traverse<T, U extends {}>(
+  items: Iterable<T>,
+  fn: (item: T) => Maybe<U>
+): Maybe<U[]>;
+export function traverse<T, R extends AnyMaybe>(
+  items: Iterable<T>,
+  fn: (item: T) => R
+): Maybe<Array<ValueFor<R>>>;
+export function traverse<T, U extends {}>(
+  fn: (item: T) => Maybe<U>
+): (items: Iterable<T>) => Maybe<U[]>;
+export function traverse<T, R extends AnyMaybe>(
+  fn: (item: T) => R
+): (items: Iterable<T>) => Maybe<Array<ValueFor<R>>>;
+export function traverse<T, U extends {}>(
+  fn: (item: T) => Maybe<U>,
+  items: Iterable<T>
+): Maybe<U[]>;
+export function traverse<T, R extends AnyMaybe>(
+  fn: (item: T) => R,
+  items: Iterable<T>
+): Maybe<Array<ValueFor<R>>>;
+export function traverse<T, U extends {}>(
+  itemsOrFn: Iterable<T> | ((item: T) => Maybe<U>),
+  fnOrItems?: ((item: T) => Maybe<U>) | Iterable<T>
+): Maybe<U[]> | ((items: Iterable<T>) => Maybe<U[]>) {
+  const op = (items: Iterable<T>, fn: (item: T) => Maybe<U>): Maybe<U[]> => {
+    const values: U[] = [];
+    for (const item of items) {
+      const result = fn(item);
+      if (result.isNothing) {
+        return nothing();
+      }
+      values.push(result.value);
+    }
+    return just(values);
+  };
+
+  if (typeof itemsOrFn === 'function') {
+    return fnOrItems !== undefined
+      ? op(fnOrItems as Iterable<T>, itemsOrFn)
+      : (items: Iterable<T>) => op(items, itemsOrFn);
+  }
+
+  return op(itemsOrFn, fnOrItems as (item: T) => Maybe<U>);
+}
+
+/**
+  Combine two {@linkcode Maybe} instances into a single `Maybe` containing a
+  tuple `[T, U]` of their values if both are {@linkcode Just}, or
+  {@linkcode Nothing} if either is `Nothing`.
+ */
+export function zip<T extends {}, U extends {}>(
+  first: Maybe<T>,
+  second: Maybe<U>
+): Maybe<[T, U]>;
+export function zip<T extends {}, U extends {} = {}>(
+  first: Maybe<T>
+): <U2 extends {} = U>(second: Maybe<U2>) => Maybe<[T, U2]>;
+export function zip<T extends {}, U extends {}>(
+  first: Maybe<T>,
+  second?: Maybe<U>
+): Maybe<[T, U]> | ((second: Maybe<U>) => Maybe<[T, U]>) {
+  const op = (s: Maybe<U>): Maybe<[T, U]> => first.zip(s);
+  return curry1(op, second);
+}
+
+/**
+  Combine two {@linkcode Maybe} instances using a function `fn`. If both inputs
+  are {@linkcode Just}, returns `Just(fn(first.value, second.value))`; otherwise
+  returns {@linkcode Nothing}.
+ */
+export function zipWith<T extends {}, U extends {}, V extends {}>(
+  first: Maybe<T>,
+  second: Maybe<U>,
+  fn: (first: T, second: U) => V
+): Maybe<V>;
+export function zipWith<T extends {}, U extends {}>(
+  first: Maybe<T>,
+  second: Maybe<U>
+): <V extends {}>(fn: (first: T, second: U) => V) => Maybe<V>;
+export function zipWith<T extends {}, U extends {}, V extends {}>(
+  fn: (first: T, second: U) => V
+): {
+  (first: Maybe<T>, second: Maybe<U>): Maybe<V>;
+  (first: Maybe<T>): (second: Maybe<U>) => Maybe<V>;
+};
+export function zipWith<T extends {}, U extends {}, V extends {}>(
+  fn: (first: T, second: U) => V,
+  first: Maybe<T>,
+  second: Maybe<U>
+): Maybe<V>;
+export function zipWith<T extends {}, U extends {}, V extends {}>(
+  fn: (first: T, second: U) => V,
+  first: Maybe<T>
+): (second: Maybe<U>) => Maybe<V>;
+export function zipWith<T extends {}, U extends {}, V extends {}>(
+  firstOrFn: Maybe<T> | ((first: T, second: U) => V),
+  secondOrFirst?: Maybe<U> | Maybe<T>,
+  fnOrSecond?: ((first: T, second: U) => V) | Maybe<U>
+): unknown {
+  if (typeof firstOrFn === 'function') {
+    const fn = firstOrFn;
+    if (secondOrFirst === undefined) {
+      return (first: Maybe<T>, second?: Maybe<U>) =>
+        second !== undefined
+          ? first.zipWith(second, fn)
+          : (s: Maybe<U>) => first.zipWith(s, fn);
+    }
+    const first = secondOrFirst as Maybe<T>;
+    if (fnOrSecond === undefined) {
+      return (second: Maybe<U>) => first.zipWith(second, fn);
+    }
+    return first.zipWith(fnOrSecond as Maybe<U>, fn);
+  }
+
+  const first = firstOrFn;
+  const second = secondOrFirst as Maybe<U>;
+  if (fnOrSecond === undefined) {
+    return (fn: (first: T, second: U) => V) => first.zipWith(second, fn);
+  }
+  return first.zipWith(second, fnOrSecond as (first: T, second: U) => V);
 }
 
 /**
