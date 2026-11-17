@@ -1725,12 +1725,6 @@ describe('`Result` method tests', () => {
       expect(traversePositive([1, 2, 3])).toEqual(result.ok([2, 4, 6]));
       expect(traversePositive([1, -2, -3])).toEqual(result.err('non-positive: -2'));
     });
-
-    test('with function first and items second', () => {
-      let res = result.traverse(checkPositive, [1, 2, 3]);
-      expectTypeOf(res).toEqualTypeOf<Result<number[], string>>();
-      expect(res).toEqual(result.ok([2, 4, 6]));
-    });
   });
 
   describe('`zip`', () => {
@@ -1793,22 +1787,12 @@ describe('`Result` method tests', () => {
       expect(result.zipWith(c, b, combine)).toEqual(result.err('c err'));
     });
 
-    test('curried and alternative argument orders', () => {
+    test('curried with only the function', () => {
       let a = result.ok<number, string>(42);
       let b = result.ok<string, string>('answer');
 
-      // Two inputs first, then function
-      let withInputs = result.zipWith(a, b);
-      expect(withInputs(combine)).toEqual(result.ok('answer: 42'));
-
-      // Function first, then two inputs
       let withFn = result.zipWith(combine);
       expect(withFn(a, b)).toEqual(result.ok('answer: 42'));
-      expect(withFn(a)(b)).toEqual(result.ok('answer: 42'));
-
-      // Function and all inputs
-      expect(result.zipWith(combine, a, b)).toEqual(result.ok('answer: 42'));
-      expect(result.zipWith(combine, a)(b)).toEqual(result.ok('answer: 42'));
     });
   });
 

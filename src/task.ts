@@ -2734,22 +2734,14 @@ export function traverse<T, R extends AnyTask>(
 export function traverse<T, U, E>(
   fn: (item: T) => Task<U, E>
 ): (items: Iterable<T>) => Task<U[], E>;
-export function traverse<T, R extends AnyTask>(
-  fn: (item: T) => R,
-  items: Iterable<T>
-): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
-export function traverse<T, U, E>(
-  fn: (item: T) => Task<U, E>,
-  items: Iterable<T>
-): Task<U[], E>;
 export function traverse<T, U, E>(
   itemsOrFn: Iterable<T> | ((item: T) => Task<U, E>),
-  fnOrItems?: ((item: T) => Task<U, E>) | Iterable<T>
+  fn?: (item: T) => Task<U, E>
 ): Task<U[], E> | ((items: Iterable<T>) => Task<U[], E>) {
-  const op = (items: Iterable<T>, fn: (item: T) => Task<U, E>): Task<U[], E> => {
+  const op = (items: Iterable<T>, mapFn: (item: T) => Task<U, E>): Task<U[], E> => {
     const tasks: Array<Task<U, E>> = [];
     for (const item of items) {
-      const task = fn(item);
+      const task = mapFn(item);
       if (task.isRejected) {
         return Task.reject(task.reason);
       }
@@ -2759,12 +2751,10 @@ export function traverse<T, U, E>(
   };
 
   if (typeof itemsOrFn === 'function') {
-    return fnOrItems !== undefined
-      ? op(fnOrItems as Iterable<T>, itemsOrFn)
-      : (items: Iterable<T>) => op(items, itemsOrFn);
+    return (items: Iterable<T>) => op(items, itemsOrFn);
   }
 
-  return op(itemsOrFn, fnOrItems as (item: T) => Task<U, E>);
+  return op(itemsOrFn, fn!);
 }
 
 /**
@@ -2788,23 +2778,15 @@ export function traverseSerial<T, R extends AnyTask>(
 export function traverseSerial<T, U, E>(
   fn: (item: T) => Task<U, E>
 ): (items: Iterable<T>) => Task<U[], E>;
-export function traverseSerial<T, R extends AnyTask>(
-  fn: (item: T) => R,
-  items: Iterable<T>
-): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
-export function traverseSerial<T, U, E>(
-  fn: (item: T) => Task<U, E>,
-  items: Iterable<T>
-): Task<U[], E>;
 export function traverseSerial<T, U, E>(
   itemsOrFn: Iterable<T> | ((item: T) => Task<U, E>),
-  fnOrItems?: ((item: T) => Task<U, E>) | Iterable<T>
+  fn?: (item: T) => Task<U, E>
 ): Task<U[], E> | ((items: Iterable<T>) => Task<U[], E>) {
-  const op = (items: Iterable<T>, fn: (item: T) => Task<U, E>): Task<U[], E> =>
+  const op = (items: Iterable<T>, mapFn: (item: T) => Task<U, E>): Task<U[], E> =>
     new Task(async (resolve, reject) => {
       const values: U[] = [];
       for (const item of items) {
-        const res = await fn(item);
+        const res = await mapFn(item);
         if (res.isErr) {
           reject(res.error);
           return;
@@ -2815,12 +2797,10 @@ export function traverseSerial<T, U, E>(
     });
 
   if (typeof itemsOrFn === 'function') {
-    return fnOrItems !== undefined
-      ? op(fnOrItems as Iterable<T>, itemsOrFn)
-      : (items: Iterable<T>) => op(items, itemsOrFn);
+    return (items: Iterable<T>) => op(items, itemsOrFn);
   }
 
-  return op(itemsOrFn, fnOrItems as (item: T) => Task<U, E>);
+  return op(itemsOrFn, fn!);
 }
 
 /**
@@ -2912,35 +2892,19 @@ export function zipWith<T, E, U, F, V>(
   second: Task<U, F> | Result<U, F>,
   fn: (first: T, second: U) => V
 ): Task<V, E | F>;
-export function zipWith<T, E, U, F>(
-  first: Task<T, E>,
-  second: Task<U, F> | Result<U, F>
-): <V>(fn: (first: T, second: U) => V) => Task<V, E | F>;
 export function zipWith<T, U, V, E = never, F = E>(
   fn: (first: T, second: U) => V
-): {
-  <E2 = E, F2 = F>(
-    first: Task<T, E2>,
-    second: Task<U, F2> | Result<U, F2>
-  ): Task<V, E2 | F2>;
-  <E2 = E>(
-    first: Task<T, E2>
-  ): <F2 = F>(second: Task<U, F2> | Result<U, F2>) => Task<V, E2 | F2>;
-};
-export function zipWith<T, E, U, F, V>(
-  fn: (first: T, second: U) => V,
-  first: Task<T, E>,
-  second: Task<U, F> | Result<U, F>
-): Task<V, E | F>;
-export function zipWith<T, E, U, V, F = E>(
-  fn: (first: T, second: U) => V,
-  first: Task<T, E>
-): <F2 = F>(second: Task<U, F2> | Result<U, F2>) => Task<V, E | F2>;
+): <E2 = E, F2 = F>(
+  first: Task<T, E2>,
+  second: Task<U, F2> | Result<U, F2>
+) => Task<V, E2 | F2>;
 export function zipWith<T, E, U, F, V>(
   firstOrFn: Task<T, E> | ((first: T, second: U) => V),
-  secondOrFirst?: Task<U, F> | Result<U, F> | Task<T, E>,
-  fnOrSecond?: ((first: T, second: U) => V) | Task<U, F> | Result<U, F>
-): unknown {
+  second?: Task<U, F> | Result<U, F>,
+  fn?: (first: T, second: U) => V
+):
+  | Task<V, E | F>
+  | ((first: Task<T, E>, second: Task<U, F> | Result<U, F>) => Task<V, E | F>) {
   const doZipWith = (
     a: Task<T, E>,
     b: Task<U, F> | Result<U, F>,
@@ -2948,26 +2912,10 @@ export function zipWith<T, E, U, F, V>(
   ): Task<V, E | F> => zip(a, b).map(([firstVal, secondVal]) => combine(firstVal, secondVal));
 
   if (typeof firstOrFn === 'function') {
-    const fn = firstOrFn;
-    if (secondOrFirst === undefined) {
-      return (first: Task<T, E>, second?: Task<U, F> | Result<U, F>) =>
-        second !== undefined
-          ? doZipWith(first, second, fn)
-          : (s: Task<U, F> | Result<U, F>) => doZipWith(first, s, fn);
-    }
-    const first = secondOrFirst as Task<T, E>;
-    if (fnOrSecond === undefined) {
-      return (second: Task<U, F> | Result<U, F>) => doZipWith(first, second, fn);
-    }
-    return doZipWith(first, fnOrSecond as Task<U, F> | Result<U, F>, fn);
+    return (first: Task<T, E>, s: Task<U, F> | Result<U, F>) => doZipWith(first, s, firstOrFn);
   }
 
-  const first = firstOrFn;
-  const second = secondOrFirst as Task<U, F> | Result<U, F>;
-  if (fnOrSecond === undefined) {
-    return (fn: (first: T, second: U) => V) => doZipWith(first, second, fn);
-  }
-  return doZipWith(first, second, fnOrSecond as (first: T, second: U) => V);
+  return doZipWith(firstOrFn, second!, fn!);
 }
 
 /**

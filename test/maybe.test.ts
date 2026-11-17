@@ -1563,12 +1563,6 @@ describe('`Maybe` class', () => {
       expect(traversePositive([1, 2, 3])).toEqual(maybe.just([2, 4, 6]));
       expect(traversePositive([1, -2, 3])).toEqual(maybe.nothing());
     });
-
-    test('with function first and items second', () => {
-      let result = maybe.traverse(parsePositive, [1, 2, 3]);
-      expectTypeOf(result).toEqualTypeOf<Maybe<number[]>>();
-      expect(result).toEqual(maybe.just([2, 4, 6]));
-    });
   });
 
   describe('`zip`', () => {
@@ -1631,22 +1625,12 @@ describe('`Maybe` class', () => {
       expect(maybe.zipWith(c, b, combine)).toEqual(maybe.nothing());
     });
 
-    test('curried and alternative argument orders', () => {
+    test('curried with only the function', () => {
       let a = maybe.just(42);
       let b = maybe.just('answer');
 
-      // Two inputs first, then function
-      let withInputs = maybe.zipWith(a, b);
-      expect(withInputs(combine)).toEqual(maybe.just('answer: 42'));
-
-      // Function first, then two inputs
       let withFn = maybe.zipWith(combine);
       expect(withFn(a, b)).toEqual(maybe.just('answer: 42'));
-      expect(withFn(a)(b)).toEqual(maybe.just('answer: 42'));
-
-      // Function and all inputs
-      expect(maybe.zipWith(combine, a, b)).toEqual(maybe.just('answer: 42'));
-      expect(maybe.zipWith(combine, a)(b)).toEqual(maybe.just('answer: 42'));
     });
   });
 
@@ -1698,12 +1682,6 @@ describe('`Maybe` class', () => {
       expectTypeOf(filterEvenHalf).toEqualTypeOf<(items: Iterable<number>) => number[]>();
       expect(filterEvenHalf([1, 2, 3, 4])).toEqual([1, 2]);
       expect(filterEvenHalf([1, 3, 5])).toEqual([]);
-    });
-
-    test('with function first and items second', () => {
-      let result = maybe.filterMap(evenHalf, [1, 2, 3, 4]);
-      expectTypeOf(result).toEqualTypeOf<number[]>();
-      expect(result).toEqual([1, 2]);
     });
   });
 

@@ -2076,22 +2076,14 @@ export function traverse<T, R extends AnyResult>(
 export function traverse<T, U, E>(
   fn: (item: T) => Result<U, E>
 ): (items: Iterable<T>) => Result<U[], E>;
-export function traverse<T, R extends AnyResult>(
-  fn: (item: T) => R,
-  items: Iterable<T>
-): Result<Array<OkFor<R>>, ErrFor<R>>;
-export function traverse<T, U, E>(
-  fn: (item: T) => Result<U, E>,
-  items: Iterable<T>
-): Result<U[], E>;
 export function traverse<T, U, E>(
   itemsOrFn: Iterable<T> | ((item: T) => Result<U, E>),
-  fnOrItems?: ((item: T) => Result<U, E>) | Iterable<T>
+  fn?: (item: T) => Result<U, E>
 ): Result<U[], E> | ((items: Iterable<T>) => Result<U[], E>) {
-  const op = (items: Iterable<T>, fn: (item: T) => Result<U, E>): Result<U[], E> => {
+  const op = (items: Iterable<T>, mapFn: (item: T) => Result<U, E>): Result<U[], E> => {
     const values: U[] = [];
     for (const item of items) {
-      const res = fn(item);
+      const res = mapFn(item);
       if (res.isErr) {
         return res.cast();
       }
@@ -2101,12 +2093,10 @@ export function traverse<T, U, E>(
   };
 
   if (typeof itemsOrFn === 'function') {
-    return fnOrItems !== undefined
-      ? op(fnOrItems as Iterable<T>, itemsOrFn)
-      : (items: Iterable<T>) => op(items, itemsOrFn);
+    return (items: Iterable<T>) => op(items, itemsOrFn);
   }
 
-  return op(itemsOrFn, fnOrItems as (item: T) => Result<U, E>);
+  return op(itemsOrFn, fn!);
 }
 
 /**
@@ -2147,30 +2137,14 @@ export function zipWith<T, E, U, F, V>(
   second: Result<U, F>,
   fn: (first: T, second: U) => V
 ): Result<V, E | F>;
-export function zipWith<T, E, U, F>(
-  first: Result<T, E>,
-  second: Result<U, F>
-): <V>(fn: (first: T, second: U) => V) => Result<V, E | F>;
 export function zipWith<T, U, V, E = never, F = E>(
   fn: (first: T, second: U) => V
-): {
-  <E2 = E, F2 = F>(first: Result<T, E2>, second: Result<U, F2>): Result<V, E2 | F2>;
-  <E2 = E>(first: Result<T, E2>): <F2 = F>(second: Result<U, F2>) => Result<V, E2 | F2>;
-};
-export function zipWith<T, E, U, F, V>(
-  fn: (first: T, second: U) => V,
-  first: Result<T, E>,
-  second: Result<U, F>
-): Result<V, E | F>;
-export function zipWith<T, E, U, V, F = E>(
-  fn: (first: T, second: U) => V,
-  first: Result<T, E>
-): <F2 = F>(second: Result<U, F2>) => Result<V, E | F2>;
+): <E2 = E, F2 = F>(first: Result<T, E2>, second: Result<U, F2>) => Result<V, E2 | F2>;
 export function zipWith<T, E, U, F, V>(
   firstOrFn: Result<T, E> | ((first: T, second: U) => V),
-  secondOrFirst?: Result<U, F> | Result<T, E>,
-  fnOrSecond?: ((first: T, second: U) => V) | Result<U, F>
-): unknown {
+  second?: Result<U, F>,
+  fn?: (first: T, second: U) => V
+): Result<V, E | F> | ((first: Result<T, E>, second: Result<U, F>) => Result<V, E | F>) {
   const doZipWith = (
     a: Result<T, E>,
     b: Result<U, F>,
@@ -2186,24 +2160,10 @@ export function zipWith<T, E, U, F, V>(
   };
 
   if (typeof firstOrFn === 'function') {
-    const fn = firstOrFn;
-    if (secondOrFirst === undefined) {
-      return (first: Result<T, E>, second?: Result<U, F>) =>
-        second !== undefined ? doZipWith(first, second, fn) : (s: Result<U, F>) => doZipWith(first, s, fn);
-    }
-    const first = secondOrFirst as Result<T, E>;
-    if (fnOrSecond === undefined) {
-      return (second: Result<U, F>) => doZipWith(first, second, fn);
-    }
-    return doZipWith(first, fnOrSecond as Result<U, F>, fn);
+    return (first: Result<T, E>, s: Result<U, F>) => doZipWith(first, s, firstOrFn);
   }
 
-  const first = firstOrFn;
-  const second = secondOrFirst as Result<U, F>;
-  if (fnOrSecond === undefined) {
-    return (fn: (first: T, second: U) => V) => doZipWith(first, second, fn);
-  }
-  return doZipWith(first, second, fnOrSecond as (first: T, second: U) => V);
+  return doZipWith(firstOrFn, second!, fn!);
 }
 
 /**

@@ -1904,21 +1904,13 @@ export function traverse<T, R extends AnyMaybe>(
   fn: (item: T) => R
 ): (items: Iterable<T>) => Maybe<Array<ValueFor<R>>>;
 export function traverse<T, U extends {}>(
-  fn: (item: T) => Maybe<U>,
-  items: Iterable<T>
-): Maybe<U[]>;
-export function traverse<T, R extends AnyMaybe>(
-  fn: (item: T) => R,
-  items: Iterable<T>
-): Maybe<Array<ValueFor<R>>>;
-export function traverse<T, U extends {}>(
   itemsOrFn: Iterable<T> | ((item: T) => Maybe<U>),
-  fnOrItems?: ((item: T) => Maybe<U>) | Iterable<T>
+  fn?: (item: T) => Maybe<U>
 ): Maybe<U[]> | ((items: Iterable<T>) => Maybe<U[]>) {
-  const op = (items: Iterable<T>, fn: (item: T) => Maybe<U>): Maybe<U[]> => {
+  const op = (items: Iterable<T>, mapFn: (item: T) => Maybe<U>): Maybe<U[]> => {
     const values: U[] = [];
     for (const item of items) {
-      const result = fn(item);
+      const result = mapFn(item);
       if (result.isNothing) {
         return nothing();
       }
@@ -1928,12 +1920,10 @@ export function traverse<T, U extends {}>(
   };
 
   if (typeof itemsOrFn === 'function') {
-    return fnOrItems !== undefined
-      ? op(fnOrItems as Iterable<T>, itemsOrFn)
-      : (items: Iterable<T>) => op(items, itemsOrFn);
+    return (items: Iterable<T>) => op(items, itemsOrFn);
   }
 
-  return op(itemsOrFn, fnOrItems as (item: T) => Maybe<U>);
+  return op(itemsOrFn, fn!);
 }
 
 /**
@@ -1967,30 +1957,14 @@ export function zipWith<T extends {}, U extends {}, V extends {}>(
   second: Maybe<U>,
   fn: (first: T, second: U) => V
 ): Maybe<V>;
-export function zipWith<T extends {}, U extends {}>(
-  first: Maybe<T>,
-  second: Maybe<U>
-): <V extends {}>(fn: (first: T, second: U) => V) => Maybe<V>;
 export function zipWith<T extends {}, U extends {}, V extends {}>(
   fn: (first: T, second: U) => V
-): {
-  (first: Maybe<T>, second: Maybe<U>): Maybe<V>;
-  (first: Maybe<T>): (second: Maybe<U>) => Maybe<V>;
-};
-export function zipWith<T extends {}, U extends {}, V extends {}>(
-  fn: (first: T, second: U) => V,
-  first: Maybe<T>,
-  second: Maybe<U>
-): Maybe<V>;
-export function zipWith<T extends {}, U extends {}, V extends {}>(
-  fn: (first: T, second: U) => V,
-  first: Maybe<T>
-): (second: Maybe<U>) => Maybe<V>;
+): (first: Maybe<T>, second: Maybe<U>) => Maybe<V>;
 export function zipWith<T extends {}, U extends {}, V extends {}>(
   firstOrFn: Maybe<T> | ((first: T, second: U) => V),
-  secondOrFirst?: Maybe<U> | Maybe<T>,
-  fnOrSecond?: ((first: T, second: U) => V) | Maybe<U>
-): unknown {
+  second?: Maybe<U>,
+  fn?: (first: T, second: U) => V
+): Maybe<V> | ((first: Maybe<T>, second: Maybe<U>) => Maybe<V>) {
   const doZipWith = (
     a: Maybe<T>,
     b: Maybe<U>,
@@ -1998,24 +1972,10 @@ export function zipWith<T extends {}, U extends {}, V extends {}>(
   ): Maybe<V> => (a.isJust && b.isJust ? just(combine(a.value, b.value)) : nothing());
 
   if (typeof firstOrFn === 'function') {
-    const fn = firstOrFn;
-    if (secondOrFirst === undefined) {
-      return (first: Maybe<T>, second?: Maybe<U>) =>
-        second !== undefined ? doZipWith(first, second, fn) : (s: Maybe<U>) => doZipWith(first, s, fn);
-    }
-    const first = secondOrFirst as Maybe<T>;
-    if (fnOrSecond === undefined) {
-      return (second: Maybe<U>) => doZipWith(first, second, fn);
-    }
-    return doZipWith(first, fnOrSecond as Maybe<U>, fn);
+    return (first: Maybe<T>, s: Maybe<U>) => doZipWith(first, s, firstOrFn);
   }
 
-  const first = firstOrFn;
-  const second = secondOrFirst as Maybe<U>;
-  if (fnOrSecond === undefined) {
-    return (fn: (first: T, second: U) => V) => doZipWith(first, second, fn);
-  }
-  return doZipWith(first, second, fnOrSecond as (first: T, second: U) => V);
+  return doZipWith(firstOrFn, second!, fn!);
 }
 
 /**
@@ -2057,21 +2017,13 @@ export function filterMap<T, R extends AnyMaybe>(
   fn: (item: T) => R
 ): (items: Iterable<T>) => Array<ValueFor<R>>;
 export function filterMap<T, U extends {}>(
-  fn: (item: T) => Maybe<U>,
-  items: Iterable<T>
-): U[];
-export function filterMap<T, R extends AnyMaybe>(
-  fn: (item: T) => R,
-  items: Iterable<T>
-): Array<ValueFor<R>>;
-export function filterMap<T, U extends {}>(
   itemsOrFn: Iterable<T> | ((item: T) => Maybe<U>),
-  fnOrItems?: ((item: T) => Maybe<U>) | Iterable<T>
+  fn?: (item: T) => Maybe<U>
 ): U[] | ((items: Iterable<T>) => U[]) {
-  const op = (items: Iterable<T>, fn: (item: T) => Maybe<U>): U[] => {
+  const op = (items: Iterable<T>, mapFn: (item: T) => Maybe<U>): U[] => {
     const values: U[] = [];
     for (const item of items) {
-      const result = fn(item);
+      const result = mapFn(item);
       if (result.isJust) {
         values.push(result.value);
       }
@@ -2080,12 +2032,10 @@ export function filterMap<T, U extends {}>(
   };
 
   if (typeof itemsOrFn === 'function') {
-    return fnOrItems !== undefined
-      ? op(fnOrItems as Iterable<T>, itemsOrFn)
-      : (items: Iterable<T>) => op(items, itemsOrFn);
+    return (items: Iterable<T>) => op(items, itemsOrFn);
   }
 
-  return op(itemsOrFn, fnOrItems as (item: T) => Maybe<U>);
+  return op(itemsOrFn, fn!);
 }
 
 /**

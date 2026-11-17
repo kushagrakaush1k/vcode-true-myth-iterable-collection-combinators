@@ -3944,12 +3944,6 @@ describe('type utilities', () => {
       expect(await traversePositive([1, 2, 3])).toEqual(Result.ok([2, 4, 6]));
       expect(await traversePositive([1, -2, -3])).toEqual(Result.err('non-positive: -2'));
     });
-
-    test('with function first and items second', async () => {
-      let theTask = traverse(checkPositive, [1, 2, 3]);
-      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
-      expect(await theTask).toEqual(Result.ok([2, 4, 6]));
-    });
   });
 
   describe('`zip`', () => {
@@ -4008,22 +4002,12 @@ describe('type utilities', () => {
       expect(await zipWith(c, b, combine)).toEqual(Result.err('c err'));
     });
 
-    test('curried and alternative argument orders', async () => {
+    test('curried with only the function', async () => {
       let a = Task.resolve<number, string>(42);
       let b = Task.resolve<string, string>('answer');
 
-      // Two inputs first, then function
-      let withInputs = zipWith(a, b);
-      expect(await withInputs(combine)).toEqual(Result.ok('answer: 42'));
-
-      // Function first, then two inputs
       let withFn = zipWith(combine);
       expect(await withFn(a, b)).toEqual(Result.ok('answer: 42'));
-      expect(await withFn(a)(b)).toEqual(Result.ok('answer: 42'));
-
-      // Function and all inputs
-      expect(await zipWith(combine, a, b)).toEqual(Result.ok('answer: 42'));
-      expect(await zipWith(combine, a)(b)).toEqual(Result.ok('answer: 42'));
     });
   });
 
@@ -4070,7 +4054,7 @@ describe('type utilities', () => {
       expect(called).toEqual([1, 2]);
     });
 
-    test('curried and alternative argument orders', async () => {
+    test('curried with only the function', async () => {
       const doubleTask = (n: number): Task<number, string> =>
         n > 0 ? Task.resolve(n * 2) : Task.reject('bad');
 
@@ -4078,8 +4062,6 @@ describe('type utilities', () => {
       expectTypeOf(curried).toEqualTypeOf<(items: Iterable<number>) => Task<number[], string>>();
       expect(await curried([1, 2, 3])).toEqual(Result.ok([2, 4, 6]));
       expect(await curried([1, -1, 3])).toEqual(Result.err('bad'));
-
-      expect(await traverseSerial(doubleTask, [1, 2])).toEqual(Result.ok([2, 4]));
     });
   });
 
