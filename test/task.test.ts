@@ -44,6 +44,10 @@ import Task, {
   flatten,
   sequence,
   traverse,
+  traverseSerial,
+  tap,
+  tapRejected,
+  retryN,
   zip,
   zipWith,
 } from 'true-myth/task';
@@ -4020,6 +4024,159 @@ describe('type utilities', () => {
       // Function and all inputs
       expect(await zipWith(combine, a, b)).toEqual(Result.ok('answer: 42'));
       expect(await zipWith(combine, a)(b)).toEqual(Result.ok('answer: 42'));
+    });
+  });
+
+  describe('`traverseSerial`', () => {
+    test('runs tasks sequentially one after the other', async () => {
+      let order: string[] = [];
+      let theTask = traverseSerial([1, 2, 3], (n) => {
+        order.push(`start-${n}`);
+        return timer(5).map(() => {
+          order.push(`end-${n}`);
+          return n * 10;
+        });
+      });
+
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], never>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.ok([10, 20, 30]));
+      expect(order).toEqual(['start-1', 'end-1', 'start-2', 'end-2', 'start-3', 'end-3']);
+    });
+
+    test('stops at the first rejection without pulling the next item', async () => {
+      let pulled = 0;
+      let called: number[] = [];
+      function* gen(): Generator<number> {
+        pulled += 1;
+        yield 1;
+        pulled += 1;
+        yield 2;
+        pulled += 1;
+        yield 3;
+      }
+
+      let theTask = traverseSerial(gen(), (n) => {
+        called.push(n);
+        return timer(1).andThen(() =>
+          n === 2 ? Task.reject<number, string>('failed at 2') : Task.resolve<number, string>(n)
+        );
+      });
+
+      expectTypeOf(theTask).toEqualTypeOf<Task<number[], string>>();
+      let res = await theTask;
+      expect(res).toEqual(Result.err('failed at 2'));
+      expect(pulled).toBe(2);
+      expect(called).toEqual([1, 2]);
+    });
+
+    test('curried and alternative argument orders', async () => {
+      const doubleTask = (n: number): Task<number, string> =>
+        n > 0 ? Task.resolve(n * 2) : Task.reject('bad');
+
+      let curried = traverseSerial(doubleTask);
+      expectTypeOf(curried).toEqualTypeOf<(items: Iterable<number>) => Task<number[], string>>();
+      expect(await curried([1, 2, 3])).toEqual(Result.ok([2, 4, 6]));
+      expect(await curried([1, -1, 3])).toEqual(Result.err('bad'));
+
+      expect(await traverseSerial(doubleTask, [1, 2])).toEqual(Result.ok([2, 4]));
+    });
+  });
+
+  describe('`tap` and `tapRejected`', () => {
+    test('`tap` runs side effect on resolved task and leaves task unchanged', async () => {
+      let seen: number | null = null;
+      let resolved = Task.resolve<number, string>(42);
+      let tapped = tap(resolved, (v) => {
+        seen = v;
+      });
+      expectTypeOf(tapped).toEqualTypeOf<Task<number, string>>();
+      expect(await tapped).toEqual(Result.ok(42));
+      expect(seen).toBe(42);
+
+      let rejected = Task.reject<number, string>('nope');
+      let seenOnReject = false;
+      let tappedReject = tap(rejected, () => {
+        seenOnReject = true;
+      });
+      expect(await tappedReject).toEqual(Result.err('nope'));
+      expect(seenOnReject).toBe(false);
+    });
+
+    test('`tap` curried form', async () => {
+      let seen: number | null = null;
+      let tapNum = tap((n: number) => {
+        seen = n;
+      });
+      let tapped = tapNum(Task.resolve<number, string>(99));
+      expectTypeOf(tapped).toEqualTypeOf<Task<number, string>>();
+      expect(await tapped).toEqual(Result.ok(99));
+      expect(seen).toBe(99);
+    });
+
+    test('`tapRejected` runs side effect on rejected task and passes rejection through unchanged', async () => {
+      let seenErr: string | null = null;
+      let rejected = Task.reject<number, string>('boom');
+      let tapped = tapRejected(rejected, (e) => {
+        seenErr = e;
+      });
+      expectTypeOf(tapped).toEqualTypeOf<Task<number, string>>();
+      expect(await tapped).toEqual(Result.err('boom'));
+      expect(seenErr).toBe('boom');
+
+      let resolved = Task.resolve<number, string>(42);
+      let seenOnResolve = false;
+      let tappedResolve = tapRejected(resolved, () => {
+        seenOnResolve = true;
+      });
+      expect(await tappedResolve).toEqual(Result.ok(42));
+      expect(seenOnResolve).toBe(false);
+    });
+
+    test('`tapRejected` curried form', async () => {
+      let seenErr: string | null = null;
+      let tapErr = tapRejected((e: string) => {
+        seenErr = e;
+      });
+      let tapped = tapErr(Task.reject<number, string>('alas'));
+      expectTypeOf(tapped).toEqualTypeOf<Task<number, string>>();
+      expect(await tapped).toEqual(Result.err('alas'));
+      expect(seenErr).toBe('alas');
+    });
+  });
+
+  describe('`retryN`', () => {
+    test('resolves immediately when first attempt succeeds', async () => {
+      let calls = 0;
+      let theTask = retryN(3, () => {
+        calls += 1;
+        return Task.resolve<string, string>('ok');
+      });
+      expectTypeOf(theTask).toEqualTypeOf<Task<string, string>>();
+      expect(await theTask).toEqual(Result.ok('ok'));
+      expect(calls).toBe(1);
+    });
+
+    test('retries up to n times after initial failure and resolves when a retry succeeds', async () => {
+      let calls = 0;
+      let theTask = retryN(3, () => {
+        calls += 1;
+        return calls < 3 ? Task.reject<number, string>(`fail-${calls}`) : Task.resolve(calls);
+      });
+      expectTypeOf(theTask).toEqualTypeOf<Task<number, string>>();
+      expect(await theTask).toEqual(Result.ok(3));
+      expect(calls).toBe(3);
+    });
+
+    test('retries n times after the first attempt fails (1 + n total attempts) before rejecting', async () => {
+      let calls = 0;
+      let theTask = retryN(3, () => {
+        calls += 1;
+        return Task.reject<number, string>(`fail-${calls}`);
+      });
+      expectTypeOf(theTask).toEqualTypeOf<Task<number, string>>();
+      expect(await theTask).toEqual(Result.err('fail-4'));
+      expect(calls).toBe(4);
     });
   });
 });

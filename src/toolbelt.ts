@@ -13,7 +13,8 @@
  */
 
 import Result from './result.js';
-import Maybe from './maybe.js';
+import Maybe, * as maybe from './maybe.js';
+import type { AnyMaybe, ValueFor } from './maybe.js';
 import { curry1 } from './-private/utils.js';
 
 /**
@@ -159,4 +160,96 @@ export function toOkOrElseErr<T extends {}, E>(
  */
 export function fromResult<T extends {}>(result: Result<T, unknown>): Maybe<T> {
   return result.isOk ? Maybe.just(result.value) : Maybe.nothing<T>();
+}
+
+/**
+  Sequence an `Iterable` of {@linkcode Maybe}s into a {@linkcode Result} of an
+  array of unwrapped values, converting the first {@linkcode "maybe".Nothing Nothing}
+  encountered into an {@linkcode "result".Err Err(errValue)} without pulling
+  any further items.
+
+  Takes `(errValue, maybes)`, or just `(errValue)` for the curried version.
+ */
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes: Iterable<Maybe<T>>
+): Result<T[], E>;
+export function sequenceMaybeAsResult<R extends AnyMaybe, E>(
+  errValue: E,
+  maybes: Iterable<R>
+): Result<Array<ValueFor<R>>, E>;
+export function sequenceMaybeAsResult<E, T extends {} = never>(
+  errValue: E
+): <T2 extends {} = T>(maybes: Iterable<Maybe<T2>>) => Result<T2[], E>;
+export function sequenceMaybeAsResult<T extends {}, E>(
+  errValue: E,
+  maybes?: Iterable<Maybe<T>>
+): Result<T[], E> | ((maybes: Iterable<Maybe<T>>) => Result<T[], E>) {
+  const op = (items: Iterable<Maybe<T>>): Result<T[], E> =>
+    fromMaybe(errValue, maybe.sequence(items));
+  return curry1(op, maybes);
+}
+
+/**
+  Traverse an `Iterable` with a function returning {@linkcode Maybe}, producing
+  a {@linkcode Result} of the array of unwrapped values or short-circuiting with
+  {@linkcode "result".Err Err(errValue)} on the first {@linkcode "maybe".Nothing Nothing}
+  without pulling any further items.
+
+  Takes `(errValue, items, fn)`, or just `(errValue)` to get back a function
+  that takes `(items, fn)`.
+ */
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items: Iterable<T>,
+  fn: (item: T) => Maybe<U>
+): Result<U[], E>;
+export function traverseMaybeAsResult<T, R extends AnyMaybe, E>(
+  errValue: E,
+  items: Iterable<T>,
+  fn: (item: T) => R
+): Result<Array<ValueFor<R>>, E>;
+export function traverseMaybeAsResult<E, T = never, U extends {} = never>(
+  errValue: E
+): <T2 = T, U2 extends {} = U>(
+  items: Iterable<T2>,
+  fn: (item: T2) => Maybe<U2>
+) => Result<U2[], E>;
+export function traverseMaybeAsResult<T, U extends {}, E>(
+  errValue: E,
+  items?: Iterable<T>,
+  fn?: (item: T) => Maybe<U>
+): Result<U[], E> | ((items: Iterable<T>, fn: (item: T) => Maybe<U>) => Result<U[], E>) {
+  const op = (iter: Iterable<T>, mapFn: (item: T) => Maybe<U>): Result<U[], E> =>
+    fromMaybe(errValue, maybe.traverse(iter, mapFn));
+  return items !== undefined ? op(items, fn!) : op;
+}
+
+/**
+  Combine two {@linkcode Maybe} instances into a {@linkcode Result} of a tuple
+  `[T, U]` if both are {@linkcode "maybe".Just Just}, or
+  {@linkcode "result".Err Err(errValue)} if either is {@linkcode "maybe".Nothing Nothing}.
+
+  Takes `(errValue, first, second)`, or just `(errValue)` to get back a function
+  that takes `(first, second)`.
+ */
+export function zipMaybeAsResult<T extends {}, U extends {}, E>(
+  errValue: E,
+  first: Maybe<T>,
+  second: Maybe<U>
+): Result<[T, U], E>;
+export function zipMaybeAsResult<E, T extends {} = never, U extends {} = never>(
+  errValue: E
+): <T2 extends {} = T, U2 extends {} = U>(
+  first: Maybe<T2>,
+  second: Maybe<U2>
+) => Result<[T2, U2], E>;
+export function zipMaybeAsResult<T extends {}, U extends {}, E>(
+  errValue: E,
+  first?: Maybe<T>,
+  second?: Maybe<U>
+): Result<[T, U], E> | ((first: Maybe<T>, second: Maybe<U>) => Result<[T, U], E>) {
+  const op = (a: Maybe<T>, b: Maybe<U>): Result<[T, U], E> =>
+    fromMaybe(errValue, maybe.zip(a, b));
+  return first !== undefined ? op(first, second!) : op;
 }

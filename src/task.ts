@@ -2768,6 +2768,118 @@ export function traverse<T, U, E>(
 }
 
 /**
+  Map each element of an `Iterable` to a {@linkcode Task} using `fn`, running
+  each `Task` sequentially (one after the other) and stopping immediately at the
+  first rejection without pulling any remaining items.
+
+  Can also be called with just `fn` to produce a curried function accepting `items`.
+ */
+export function traverseSerial<T, R extends AnyTask>(
+  items: Iterable<T>,
+  fn: (item: T) => R
+): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverseSerial<T, U, E>(
+  items: Iterable<T>,
+  fn: (item: T) => Task<U, E>
+): Task<U[], E>;
+export function traverseSerial<T, R extends AnyTask>(
+  fn: (item: T) => R
+): (items: Iterable<T>) => Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverseSerial<T, U, E>(
+  fn: (item: T) => Task<U, E>
+): (items: Iterable<T>) => Task<U[], E>;
+export function traverseSerial<T, R extends AnyTask>(
+  fn: (item: T) => R,
+  items: Iterable<T>
+): Task<Array<ResolvesTo<R>>, RejectsWith<R>>;
+export function traverseSerial<T, U, E>(
+  fn: (item: T) => Task<U, E>,
+  items: Iterable<T>
+): Task<U[], E>;
+export function traverseSerial<T, U, E>(
+  itemsOrFn: Iterable<T> | ((item: T) => Task<U, E>),
+  fnOrItems?: ((item: T) => Task<U, E>) | Iterable<T>
+): Task<U[], E> | ((items: Iterable<T>) => Task<U[], E>) {
+  const op = (items: Iterable<T>, fn: (item: T) => Task<U, E>): Task<U[], E> =>
+    new Task(async (resolve, reject) => {
+      const values: U[] = [];
+      for (const item of items) {
+        const res = await fn(item);
+        if (res.isErr) {
+          reject(res.error);
+          return;
+        }
+        values.push(res.value);
+      }
+      resolve(values);
+    });
+
+  if (typeof itemsOrFn === 'function') {
+    return fnOrItems !== undefined
+      ? op(fnOrItems as Iterable<T>, itemsOrFn)
+      : (items: Iterable<T>) => op(items, itemsOrFn);
+  }
+
+  return op(itemsOrFn, fnOrItems as (item: T) => Task<U, E>);
+}
+
+/**
+  Run a side-effect function with the resolved value of a {@linkcode Task}
+  without modifying the `Task` outcome.
+
+  Takes `(task, fn)`, or just `(fn)` for the curried version.
+ */
+export function tap<T, E>(task: Task<T, E>, fn: (value: T) => void): Task<T, E>;
+export function tap<T, E = unknown>(
+  fn: (value: T) => void
+): <E2 = E>(task: Task<T, E2>) => Task<T, E2>;
+export function tap<T, E>(
+  taskOrFn: Task<T, E> | ((value: T) => void),
+  fn?: (value: T) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (typeof taskOrFn === 'function') {
+    return (task: Task<T, E>) => task.inspect(taskOrFn);
+  }
+  return taskOrFn.inspect(fn!);
+}
+
+/**
+  Run a side-effect function with the rejection reason of a {@linkcode Task}
+  without modifying the `Task` outcome (the rejection is passed through unchanged).
+
+  Takes `(task, fn)`, or just `(fn)` for the curried version.
+ */
+export function tapRejected<T, E>(task: Task<T, E>, fn: (reason: E) => void): Task<T, E>;
+export function tapRejected<E, T = unknown>(
+  fn: (reason: E) => void
+): <T2 = T>(task: Task<T2, E>) => Task<T2, E>;
+export function tapRejected<T, E>(
+  taskOrFn: Task<T, E> | ((reason: E) => void),
+  fn?: (reason: E) => void
+): Task<T, E> | ((task: Task<T, E>) => Task<T, E>) {
+  if (typeof taskOrFn === 'function') {
+    return (task: Task<T, E>) => task.inspectRejected(taskOrFn);
+  }
+  return taskOrFn.inspectRejected(fn!);
+}
+
+/**
+  Execute a function `fn` that returns a {@linkcode Task}, retrying up to `n`
+  additional times if the initial attempt rejects (for at most `1 + n` total
+  attempts).
+ */
+export function retryN<R extends AnyTask>(
+  n: number,
+  fn: () => R
+): Task<ResolvesTo<R>, RejectsWith<R>>;
+export function retryN<T, E>(n: number, fn: () => Task<T, E>): Task<T, E>;
+export function retryN<T, E>(n: number, fn: () => Task<T, E>): Task<T, E> {
+  const attempt = (remaining: number): Task<T, E> =>
+    fn().orElse((reason) => (remaining > 0 ? attempt(remaining - 1) : Task.reject(reason)));
+  return attempt(n);
+}
+
+/**
   Combine two {@linkcode Task} instances into a single `Task` resolving to a
   tuple `[T, U]` of their values if both resolve, or rejecting with the first
   rejection reason if either rejects.
