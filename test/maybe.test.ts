@@ -1578,7 +1578,6 @@ describe('`Maybe` class', () => {
       let zipped = maybe.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Maybe<[number, string]>>();
       expect(zipped).toEqual(maybe.just([1, 'hello']));
-      expect(a.zip(b)).toEqual(maybe.just([1, 'hello']));
     });
 
     test('when the first is `Nothing`', () => {
@@ -1587,7 +1586,6 @@ describe('`Maybe` class', () => {
       let zipped = maybe.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Maybe<[number, string]>>();
       expect(zipped).toEqual(maybe.nothing());
-      expect(a.zip(b)).toEqual(maybe.nothing());
     });
 
     test('when the second is `Nothing`', () => {
@@ -1596,7 +1594,6 @@ describe('`Maybe` class', () => {
       let zipped = maybe.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Maybe<[number, string]>>();
       expect(zipped).toEqual(maybe.nothing());
-      expect(a.zip(b)).toEqual(maybe.nothing());
     });
 
     test('when both are `Nothing`', () => {
@@ -1622,7 +1619,6 @@ describe('`Maybe` class', () => {
       let result = maybe.zipWith(a, b, combine);
       expectTypeOf(result).toEqualTypeOf<Maybe<string>>();
       expect(result).toEqual(maybe.just('answer: 42'));
-      expect(a.zipWith(b, combine)).toEqual(maybe.just('answer: 42'));
     });
 
     test('when either is `Nothing`', () => {
@@ -1633,8 +1629,6 @@ describe('`Maybe` class', () => {
       expect(maybe.zipWith(a, b, combine)).toEqual(maybe.nothing());
       expect(maybe.zipWith(c, maybe.just('answer'), combine)).toEqual(maybe.nothing());
       expect(maybe.zipWith(c, b, combine)).toEqual(maybe.nothing());
-      expect(a.zipWith(b, combine)).toEqual(maybe.nothing());
-      expect(c.zipWith(maybe.just('answer'), combine)).toEqual(maybe.nothing());
     });
 
     test('curried and alternative argument orders', () => {
@@ -1653,6 +1647,86 @@ describe('`Maybe` class', () => {
       // Function and all inputs
       expect(maybe.zipWith(combine, a, b)).toEqual(maybe.just('answer: 42'));
       expect(maybe.zipWith(combine, a)(b)).toEqual(maybe.just('answer: 42'));
+    });
+  });
+
+  describe('`compact`', () => {
+    test('drops `Nothing`s and unwraps `Just`s', () => {
+      let items: Array<Maybe<number>> = [
+        maybe.just(1),
+        maybe.nothing(),
+        maybe.just(2),
+        maybe.nothing(),
+        maybe.just(3),
+      ];
+      let result = maybe.compact(items);
+      expectTypeOf(result).toEqualTypeOf<number[]>();
+      expect(result).toEqual([1, 2, 3]);
+    });
+
+    test('with an empty iterable or all `Nothing`s', () => {
+      expect(maybe.compact<number>([])).toEqual([]);
+      expect(maybe.compact([maybe.nothing<number>(), maybe.nothing<number>()])).toEqual([]);
+    });
+
+    test('with a `Set`', () => {
+      let set = new Set<Maybe<string>>([maybe.just('a'), maybe.nothing(), maybe.just('b')]);
+      let result = maybe.compact(set);
+      expectTypeOf(result).toEqualTypeOf<string[]>();
+      expect(result).toEqual(['a', 'b']);
+    });
+  });
+
+  describe('`filterMap`', () => {
+    const evenHalf = (n: number): Maybe<number> =>
+      n % 2 === 0 ? maybe.just(n / 2) : maybe.nothing();
+
+    test('with items and function', () => {
+      let result = maybe.filterMap([1, 2, 3, 4, 5, 6], evenHalf);
+      expectTypeOf(result).toEqualTypeOf<number[]>();
+      expect(result).toEqual([1, 2, 3]);
+    });
+
+    test('with a `Set`', () => {
+      let result = maybe.filterMap(new Set([1, 2, 3, 4]), evenHalf);
+      expectTypeOf(result).toEqualTypeOf<number[]>();
+      expect(result).toEqual([1, 2]);
+    });
+
+    test('curried with only the function', () => {
+      let filterEvenHalf = maybe.filterMap(evenHalf);
+      expectTypeOf(filterEvenHalf).toEqualTypeOf<(items: Iterable<number>) => number[]>();
+      expect(filterEvenHalf([1, 2, 3, 4])).toEqual([1, 2]);
+      expect(filterEvenHalf([1, 3, 5])).toEqual([]);
+    });
+
+    test('with function first and items second', () => {
+      let result = maybe.filterMap(evenHalf, [1, 2, 3, 4]);
+      expectTypeOf(result).toEqualTypeOf<number[]>();
+      expect(result).toEqual([1, 2]);
+    });
+  });
+
+  describe('`firstJust`', () => {
+    test('returns the first `Just` and ignores subsequent `Just`s', () => {
+      let result = maybe.firstJust([
+        maybe.nothing<number>(),
+        maybe.just(2),
+        maybe.just(3),
+        maybe.nothing<number>(),
+      ]);
+      expectTypeOf(result).toEqualTypeOf<Maybe<number>>();
+      expect(result).toEqual(maybe.just(2));
+    });
+
+    test('returns `Nothing` when all are `Nothing` or empty', () => {
+      let fromNothings = maybe.firstJust([maybe.nothing<number>(), maybe.nothing<number>()]);
+      expectTypeOf(fromNothings).toEqualTypeOf<Maybe<number>>();
+      expect(fromNothings).toEqual(maybe.nothing());
+
+      let fromEmpty = maybe.firstJust<number>([]);
+      expectTypeOf(fromEmpty).toEqualTypeOf<Maybe<number>>();
+      expect(fromEmpty).toEqual(maybe.nothing());
     });
   });
 });

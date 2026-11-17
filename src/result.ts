@@ -394,28 +394,6 @@ class ResultImpl<T, E> {
     }
   }
 
-  /** Method variant for {@linkcode zip} */
-  zip<U, F = E>(other: Result<U, F>): Result<[T, U], E | F> {
-    if (this.repr[0] === Variant.Err) {
-      return (this as Err<T, E>).cast();
-    }
-    if (other.isErr) {
-      return other.cast();
-    }
-    return Result.ok([this.repr[1], other.value]);
-  }
-
-  /** Method variant for {@linkcode zipWith} */
-  zipWith<U, V, F = E>(other: Result<U, F>, fn: (first: T, second: U) => V): Result<V, E | F> {
-    if (this.repr[0] === Variant.Err) {
-      return (this as Err<T, E>).cast();
-    }
-    if (other.isErr) {
-      return other.cast();
-    }
-    return Result.ok(fn(this.repr[1], other.value));
-  }
-
   cast() {
     return this;
   }
@@ -2147,7 +2125,15 @@ export function zip<T, E, U, F>(
   first: Result<T, E>,
   second?: Result<U, F>
 ): Result<[T, U], E | F> | ((second: Result<U, F>) => Result<[T, U], E | F>) {
-  const op = (s: Result<U, F>): Result<[T, U], E | F> => first.zip(s);
+  const op = (s: Result<U, F>): Result<[T, U], E | F> => {
+    if (first.isErr) {
+      return first.cast();
+    }
+    if (s.isErr) {
+      return s.cast();
+    }
+    return Result.ok([first.value, s.value]);
+  };
   return curry1(op, second);
 }
 
@@ -2185,27 +2171,61 @@ export function zipWith<T, E, U, F, V>(
   secondOrFirst?: Result<U, F> | Result<T, E>,
   fnOrSecond?: ((first: T, second: U) => V) | Result<U, F>
 ): unknown {
+  const doZipWith = (
+    a: Result<T, E>,
+    b: Result<U, F>,
+    combine: (first: T, second: U) => V
+  ): Result<V, E | F> => {
+    if (a.isErr) {
+      return a.cast();
+    }
+    if (b.isErr) {
+      return b.cast();
+    }
+    return Result.ok(combine(a.value, b.value));
+  };
+
   if (typeof firstOrFn === 'function') {
     const fn = firstOrFn;
     if (secondOrFirst === undefined) {
       return (first: Result<T, E>, second?: Result<U, F>) =>
-        second !== undefined
-          ? first.zipWith(second, fn)
-          : (s: Result<U, F>) => first.zipWith(s, fn);
+        second !== undefined ? doZipWith(first, second, fn) : (s: Result<U, F>) => doZipWith(first, s, fn);
     }
     const first = secondOrFirst as Result<T, E>;
     if (fnOrSecond === undefined) {
-      return (second: Result<U, F>) => first.zipWith(second, fn);
+      return (second: Result<U, F>) => doZipWith(first, second, fn);
     }
-    return first.zipWith(fnOrSecond as Result<U, F>, fn);
+    return doZipWith(first, fnOrSecond as Result<U, F>, fn);
   }
 
   const first = firstOrFn;
   const second = secondOrFirst as Result<U, F>;
   if (fnOrSecond === undefined) {
-    return (fn: (first: T, second: U) => V) => first.zipWith(second, fn);
+    return (fn: (first: T, second: U) => V) => doZipWith(first, second, fn);
   }
-  return first.zipWith(second, fnOrSecond as (first: T, second: U) => V);
+  return doZipWith(first, second, fnOrSecond as (first: T, second: U) => V);
+}
+
+/**
+  Partition an `Iterable` of {@linkcode Result}s into a tuple of `[oks, errs]`,
+  where `oks` contains all unwrapped {@linkcode Ok} values and `errs` contains
+  all unwrapped {@linkcode Err} error values, preserving relative order.
+ */
+export function partition<R extends AnyResult>(
+  results: Iterable<R>
+): [Array<OkFor<R>>, Array<ErrFor<R>>];
+export function partition<T, E>(results: Iterable<Result<T, E>>): [T[], E[]];
+export function partition<T, E>(results: Iterable<Result<T, E>>): [T[], E[]] {
+  const oks: T[] = [];
+  const errs: E[] = [];
+  for (const item of results) {
+    if (item.isOk) {
+      oks.push(item.value);
+    } else {
+      errs.push(item.error);
+    }
+  }
+  return [oks, errs];
 }
 
 /**

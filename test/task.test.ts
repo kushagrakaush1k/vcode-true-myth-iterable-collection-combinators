@@ -3955,7 +3955,6 @@ describe('type utilities', () => {
       let zipped = zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | Error>>();
       expect(await zipped).toEqual(Result.ok([1, 'hello']));
-      expect(await a.zip(b)).toEqual(Result.ok([1, 'hello']));
     });
 
     test('with a `Result`', async () => {
@@ -3964,7 +3963,6 @@ describe('type utilities', () => {
       let zipped = zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Task<[number, string], string | boolean>>();
       expect(await zipped).toEqual(Result.ok([1, 'hello']));
-      expect(await a.zip(b)).toEqual(Result.ok([1, 'hello']));
     });
 
     test('when either rejects', async () => {
@@ -3994,7 +3992,6 @@ describe('type utilities', () => {
       let theTask = zipWith(a, b, combine);
       expectTypeOf(theTask).toEqualTypeOf<Task<string, string | boolean>>();
       expect(await theTask).toEqual(Result.ok('answer: 42'));
-      expect(await a.zipWith(b, combine)).toEqual(Result.ok('answer: 42'));
     });
 
     test('when either rejects', async () => {
@@ -4005,8 +4002,6 @@ describe('type utilities', () => {
       expect(await zipWith(a, b, combine)).toEqual(Result.err('b err'));
       expect(await zipWith(c, Task.resolve('answer'), combine)).toEqual(Result.err('c err'));
       expect(await zipWith(c, b, combine)).toEqual(Result.err('c err'));
-      expect(await a.zipWith(b, combine)).toEqual(Result.err('b err'));
-      expect(await c.zipWith(Task.resolve('answer'), combine)).toEqual(Result.err('c err'));
     });
 
     test('curried and alternative argument orders', async () => {

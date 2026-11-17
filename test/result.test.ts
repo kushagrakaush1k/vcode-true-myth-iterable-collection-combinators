@@ -1740,7 +1740,6 @@ describe('`Result` method tests', () => {
       let zipped = result.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | Error>>();
       expect(zipped).toEqual(result.ok([1, 'hello']));
-      expect(a.zip(b)).toEqual(result.ok([1, 'hello']));
     });
 
     test('when the first is `Err`', () => {
@@ -1749,7 +1748,6 @@ describe('`Result` method tests', () => {
       let zipped = result.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
       expect(zipped).toEqual(result.err('first err'));
-      expect(a.zip(b)).toEqual(result.err('first err'));
     });
 
     test('when the second is `Err`', () => {
@@ -1758,7 +1756,6 @@ describe('`Result` method tests', () => {
       let zipped = result.zip(a, b);
       expectTypeOf(zipped).toEqualTypeOf<Result<[number, string], string | boolean>>();
       expect(zipped).toEqual(result.err(false));
-      expect(a.zip(b)).toEqual(result.err(false));
     });
 
     test('when both are `Err`', () => {
@@ -1784,7 +1781,6 @@ describe('`Result` method tests', () => {
       let res = result.zipWith(a, b, combine);
       expectTypeOf(res).toEqualTypeOf<Result<string, string | boolean>>();
       expect(res).toEqual(result.ok('answer: 42'));
-      expect(a.zipWith(b, combine)).toEqual(result.ok('answer: 42'));
     });
 
     test('when either is `Err`', () => {
@@ -1795,8 +1791,6 @@ describe('`Result` method tests', () => {
       expect(result.zipWith(a, b, combine)).toEqual(result.err('b err'));
       expect(result.zipWith(c, result.ok('answer'), combine)).toEqual(result.err('c err'));
       expect(result.zipWith(c, b, combine)).toEqual(result.err('c err'));
-      expect(a.zipWith(b, combine)).toEqual(result.err('b err'));
-      expect(c.zipWith(result.ok('answer'), combine)).toEqual(result.err('c err'));
     });
 
     test('curried and alternative argument orders', () => {
@@ -1815,6 +1809,43 @@ describe('`Result` method tests', () => {
       // Function and all inputs
       expect(result.zipWith(combine, a, b)).toEqual(result.ok('answer: 42'));
       expect(result.zipWith(combine, a)(b)).toEqual(result.ok('answer: 42'));
+    });
+  });
+
+  describe('`partition`', () => {
+    test('separates `Ok`s first and `Err`s second', () => {
+      let items: Array<Result<number, string>> = [
+        result.ok(1),
+        result.err('bad 1'),
+        result.ok(2),
+        result.err('bad 2'),
+        result.ok(3),
+      ];
+      let partitioned = result.partition(items);
+      expectTypeOf(partitioned).toEqualTypeOf<[number[], string[]]>();
+      expect(partitioned).toEqual([
+        [1, 2, 3],
+        ['bad 1', 'bad 2'],
+      ]);
+    });
+
+    test('with an empty iterable', () => {
+      let partitioned = result.partition<number, string>([]);
+      expectTypeOf(partitioned).toEqualTypeOf<[number[], string[]]>();
+      expect(partitioned).toEqual([[], []]);
+    });
+
+    test('with a `Set`', () => {
+      let set = new Set<Result<string, number>>([
+        result.ok('a'),
+        result.err(404),
+        result.ok('b'),
+      ]);
+      let [oks, errs] = result.partition(set);
+      expectTypeOf(oks).toEqualTypeOf<string[]>();
+      expectTypeOf(errs).toEqualTypeOf<number[]>();
+      expect(oks).toEqual(['a', 'b']);
+      expect(errs).toEqual([404]);
     });
   });
 });

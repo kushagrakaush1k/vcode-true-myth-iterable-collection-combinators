@@ -964,20 +964,6 @@ class TaskImpl<T, E> implements PromiseLike<Result<T, E>> {
   async *[Symbol.asyncIterator](): AsyncGenerator<Result<T, E>, void, unknown> {
     yield await this.#promise;
   }
-
-  /** Method variant for {@linkcode zip} */
-  zip<U, F = E>(other: Task<U, F> | Result<U, F>): Task<[T, U], E | F> {
-    let otherTask = result.isInstance(other) ? fromResult(other) : other;
-    return all([this as Task<T, E>, otherTask]);
-  }
-
-  /** Method variant for {@linkcode zipWith} */
-  zipWith<U, V, F = E>(
-    other: Task<U, F> | Result<U, F>,
-    fn: (first: T, second: U) => V
-  ): Task<V, E | F> {
-    return this.zip(other).map(([first, second]) => fn(first, second));
-  }
 }
 
 /**
@@ -2797,7 +2783,10 @@ export function zip<T, E, U, F>(
   first: Task<T, E>,
   second?: Task<U, F> | Result<U, F>
 ): Task<[T, U], E | F> | ((second: Task<U, F> | Result<U, F>) => Task<[T, U], E | F>) {
-  const op = (s: Task<U, F> | Result<U, F>): Task<[T, U], E | F> => first.zip(s);
+  const op = (s: Task<U, F> | Result<U, F>): Task<[T, U], E | F> => {
+    const otherTask = result.isInstance(s) ? fromResult(s) : s;
+    return all([first, otherTask]);
+  };
   return curry1(op, second);
 }
 
@@ -2840,27 +2829,33 @@ export function zipWith<T, E, U, F, V>(
   secondOrFirst?: Task<U, F> | Result<U, F> | Task<T, E>,
   fnOrSecond?: ((first: T, second: U) => V) | Task<U, F> | Result<U, F>
 ): unknown {
+  const doZipWith = (
+    a: Task<T, E>,
+    b: Task<U, F> | Result<U, F>,
+    combine: (first: T, second: U) => V
+  ): Task<V, E | F> => zip(a, b).map(([firstVal, secondVal]) => combine(firstVal, secondVal));
+
   if (typeof firstOrFn === 'function') {
     const fn = firstOrFn;
     if (secondOrFirst === undefined) {
       return (first: Task<T, E>, second?: Task<U, F> | Result<U, F>) =>
         second !== undefined
-          ? first.zipWith(second, fn)
-          : (s: Task<U, F> | Result<U, F>) => first.zipWith(s, fn);
+          ? doZipWith(first, second, fn)
+          : (s: Task<U, F> | Result<U, F>) => doZipWith(first, s, fn);
     }
     const first = secondOrFirst as Task<T, E>;
     if (fnOrSecond === undefined) {
-      return (second: Task<U, F> | Result<U, F>) => first.zipWith(second, fn);
+      return (second: Task<U, F> | Result<U, F>) => doZipWith(first, second, fn);
     }
-    return first.zipWith(fnOrSecond as Task<U, F> | Result<U, F>, fn);
+    return doZipWith(first, fnOrSecond as Task<U, F> | Result<U, F>, fn);
   }
 
   const first = firstOrFn;
   const second = secondOrFirst as Task<U, F> | Result<U, F>;
   if (fnOrSecond === undefined) {
-    return (fn: (first: T, second: U) => V) => first.zipWith(second, fn);
+    return (fn: (first: T, second: U) => V) => doZipWith(first, second, fn);
   }
-  return first.zipWith(second, fnOrSecond as (first: T, second: U) => V);
+  return doZipWith(first, second, fnOrSecond as (first: T, second: U) => V);
 }
 
 /**
